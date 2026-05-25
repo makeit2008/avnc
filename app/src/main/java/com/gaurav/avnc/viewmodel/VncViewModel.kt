@@ -316,19 +316,32 @@ class VncViewModel(app: Application) : BaseViewModel(app) {
     }
 
     private var clipReceiverJob: Job? = null
+    private var pendingClipText: String? = null
+
+    /**
+     * Debounce delay in milliseconds for clipboard updates.
+     * This ensures we only copy to clipboard when selection is complete,
+     * not during the selection process.
+     */
+    private val CLIPBOARD_DEBOUNCE_DELAY = 500L
+
     private fun receiveClipboardText(text: String) {
         if (!pref.server.clipboardSync)
             return
 
-        // This is a protective measure against servers which send every 'selection' made on the server.
-        // Setting clip text involves IPC, so these events can exhaust Binder resources, leading to ANRs.
-        if (clipReceiverJob?.isActive == true) {
-            Log.w(javaClass.simpleName, "Dropping clip text received from server, previous text is still pending")
-            return
-        }
+        // Store the pending text and cancel any pending job
+        pendingClipText = text
+        clipReceiverJob?.cancel()
 
+        // Start a new delayed job to copy to clipboard
         clipReceiverJob = launchIO {
-            setClipboardText(app, text)
+            delay(CLIPBOARD_DEBOUNCE_DELAY)
+
+            // Only copy if this is still the latest pending text
+            val textToCopy = pendingClipText
+            if (textToCopy != null) {
+                setClipboardText(app, textToCopy)
+            }
         }
     }
 
